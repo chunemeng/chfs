@@ -81,7 +81,7 @@ BlockManager::BlockManager(const std::string &file, usize block_cnt, bool is_log
   this->write_fail_cnt = 0;
   this->maybe_failed = false;
   // TODO: Implement this function.
-  UNIMPLEMENTED();    
+  UNIMPLEMENTED();
 }
 
 auto BlockManager::write_block(block_id_t block_id, const u8 *data)
@@ -92,7 +92,11 @@ auto BlockManager::write_block(block_id_t block_id, const u8 *data)
       return ErrorType::INVALID;
     }
   }
-  
+//  auto block_offset = block_id * this->block_sz;
+//
+//  std::memcpy(this->block_data + block_offset, data, block_size());
+//
+//  return KNullOk;
 
   // TODO: Implement this function.
   UNIMPLEMENTED();
@@ -109,6 +113,11 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
       return ErrorType::INVALID;
     }
   }
+//  auto block_offset = block_id * this->block_sz;
+//
+//  std::memcpy(this->block_data + block_offset + offset, data, len);
+//
+//  return KNullOk;
 
   // TODO: Implement this function.
   UNIMPLEMENTED();
@@ -118,16 +127,17 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
 
 auto BlockManager::read_block(block_id_t block_id, u8 *data) -> ChfsNullResult {
 
-  // TODO: Implement this function.
-  UNIMPLEMENTED();
+  auto block_offset = block_id * this->block_sz;
+
+  std::memcpy(data, this->block_data + block_offset, block_size());
 
   return KNullOk;
 }
 
 auto BlockManager::zero_block(block_id_t block_id) -> ChfsNullResult {
-  
-  // TODO: Implement this function.
-  UNIMPLEMENTED();
+  auto offset = block_id * this->block_sz;
+
+  std::memset(this->block_data + offset, 0, block_size());
 
   return KNullOk;
 }
