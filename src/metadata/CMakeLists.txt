@@ -1,9 +1,9 @@
 add_library(
   chfs_metadata
   OBJECT
-  superblock.cc
-  manager.cc
-  inode.cc
+        superblock.cc
+        manager.cc
+        inode.cc
 )
 
 set(ALL_OBJECT_FILES
