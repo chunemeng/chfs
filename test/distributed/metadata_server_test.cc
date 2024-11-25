@@ -61,6 +61,7 @@ protected:
 TEST_F(MetadataServerTest, CreateDirThenLookup) {
   // This test create an directory at '/root/test_dir`
   auto dir_id = meta_srv->mknode(DirectoryType, 1, "test_dir");
+  std::cout<<dir_id<<std::endl;
   EXPECT_EQ(dir_id, 2);
 
   auto lookup_res = meta_srv->lookup(1, "test_dir");

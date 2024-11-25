@@ -112,6 +112,15 @@ public:
    */
   auto read_file(inode_id_t) -> ChfsResult<std::vector<u8>>;
 
+  auto read_file(inode_id_t id, std::vector<u8> &content)
+      -> ChfsNullResult;
+
+  auto read_as_regular_file(inode_id_t id, std::vector<u8> &content)
+      -> ChfsNullResult;
+
+  auto append_regular_file(inode_id_t id, block_id_t block_id, uint32_t mac_id)
+      -> ChfsNullResult;
+
   /**
    * Read the content to the blocks pointed by the inode
    *
@@ -129,6 +138,8 @@ public:
    * @return whether the remove is ok
    */
   auto remove_file(inode_id_t) -> ChfsNullResult;
+
+  auto remove_regular_file(inode_id_t id, std::vector<block_id_t>& buf) -> ChfsNullResult;
 
   /**
    * Get the free blocks of the filesystem.
@@ -185,6 +196,9 @@ public:
    * @return  ENOTEMPTY if the deleted file is a directory
    */
   auto unlink(inode_id_t parent, const char *name) -> ChfsNullResult;
+
+  auto unlink_regular_file(inode_id_t parent, const char *name, std::vector<block_id_t>& buf)
+      -> ChfsNullResult;
 
 private:
   FileOperation(std::shared_ptr<BlockManager> bm,

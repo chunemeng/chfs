@@ -80,8 +80,8 @@ BlockManager::BlockManager(const std::string &file, usize block_cnt, bool is_log
     : file_name_(file), block_cnt(block_cnt), in_memory(false) {
   this->write_fail_cnt = 0;
   this->maybe_failed = false;
-  // TODO: Implement this function.
-  UNIMPLEMENTED();
+//  // TODO: Implement this function.
+//  UNIMPLEMENTED();
 }
 
 auto BlockManager::write_block(block_id_t block_id, const u8 *data)
@@ -92,14 +92,14 @@ auto BlockManager::write_block(block_id_t block_id, const u8 *data)
       return ErrorType::INVALID;
     }
   }
-//  auto block_offset = block_id * this->block_sz;
-//
-//  std::memcpy(this->block_data + block_offset, data, block_size());
-//
-//  return KNullOk;
+  auto block_offset = block_id * this->block_sz;
+
+  std::memcpy(this->block_data + block_offset, data, block_size());
+
+  return KNullOk;
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+//  UNIMPLEMENTED();
   this->write_fail_cnt++;
   return KNullOk;
 }
@@ -113,14 +113,14 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
       return ErrorType::INVALID;
     }
   }
-//  auto block_offset = block_id * this->block_sz;
-//
-//  std::memcpy(this->block_data + block_offset + offset, data, len);
-//
-//  return KNullOk;
+  auto block_offset = block_id * this->block_sz;
 
-  // TODO: Implement this function.
-  UNIMPLEMENTED();
+  std::memcpy(this->block_data + block_offset + offset, data, len);
+
+  return KNullOk;
+
+//  // TODO: Implement this function.
+//  UNIMPLEMENTED();
   this->write_fail_cnt++;
   return KNullOk;
 }
