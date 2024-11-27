@@ -121,6 +121,7 @@ auto BlockAllocator::allocate() -> ChfsResult<block_id_t> {
       return ChfsResult<block_id_t>(retval);
     }
   }
+  std::cerr << "No free block found" << std::endl;
   return ChfsResult<block_id_t>(ErrorType::OUT_OF_RESOURCE);
 }
 

@@ -81,10 +81,18 @@ TEST_F(DistributedClientTest, WriteAndThenRead) {
   auto write_res = client->write_file(inode_id, file_offset, data);
   EXPECT_EQ(write_res.is_ok(), true);
 
+//  auto ref = client->get_type_attr(inode_id);
+//
+//  write_res = client->write_file(inode_id, ref.unwrap().second.size, data);
+
   // Then read these bytes
   auto read_res = client->read_file(inode_id, file_offset, data.size());
   EXPECT_EQ(read_res.is_ok(), true);
   EXPECT_EQ(read_res.unwrap(), data);
+
+// read_res = client->read_file(inode_id, ref.unwrap().second.size, data.size());
+//  EXPECT_EQ(read_res.is_ok(), true);
+//  EXPECT_EQ(read_res.unwrap(), data);
 }
 
 TEST_F(DistributedClientTest, CreateConcurrent) {

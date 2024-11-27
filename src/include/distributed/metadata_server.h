@@ -13,11 +13,11 @@
 
 #include "common/config.h"
 #include "common/util.h"
+#include "distributed/commit_log.h"
+#include "filesystem/operations.h"
 #include "librpc/client.h"
 #include "librpc/server.h"
 #include "metadata/manager.h"
-#include "filesystem/operations.h"
-#include "distributed/commit_log.h"
 
 namespace chfs {
 
@@ -55,12 +55,23 @@ namespace chfs {
 const u8 RegularFileType = 1;
 const u8 DirectoryType = 2;
 
+class Client : public RpcClient {
+
+
+public:
+    Client(std::string const &addr, u16 port, bool reliable)
+        : RpcClient(addr, port, reliable) {}
+
+
+    std::mutex latch_;
+};
+
 using BlockInfo = std::tuple<block_id_t, mac_id_t, version_t>;
 
 class MetadataServer {
-  const size_t num_worker_threads = 4; // worker threads for rpc handlers
+    const size_t num_worker_threads = 4;// worker threads for rpc handlers
 public:
-  /**
+    /**
    * Start a metadata server that listens on `localhost` with the given port.
    *
    * It receives requests from client and sometimes send requests to
@@ -72,11 +83,11 @@ public:
    * @param is_checkpoint_enabled: Whether to enable the checkpoint.
    * @param may_failed: Whether the metadata server persist data may fail.
    */
-  MetadataServer(u16 port, const std::string &data_path = "/tmp/inode_data",
-                 bool is_log_enabled = false,
-                 bool is_checkpoint_enabled = false, bool may_failed = false);
+    MetadataServer(u16 port, const std::string &data_path = "/tmp/inode_data",
+                   bool is_log_enabled = false,
+                   bool is_checkpoint_enabled = false, bool may_failed = false);
 
-  /**
+    /**
    * Start a metadata server listens on `address:port`.
    *
    * @param address: The address to be bound.
@@ -86,12 +97,12 @@ public:
    * @param is_checkpoint_enabled: Whether to enable the checkpoint.
    * @param may_failed: Whether the metadata server persist data may fail.
    */
-  MetadataServer(std::string const &address, u16 port,
-                 const std::string &data_path = "/tmp/inode_data",
-                 bool is_log_enabled = false,
-                 bool is_checkpoint_enabled = false, bool may_failed = false);
+    MetadataServer(std::string const &address, u16 port,
+                   const std::string &data_path = "/tmp/inode_data",
+                   bool is_log_enabled = false,
+                   bool is_checkpoint_enabled = false, bool may_failed = false);
 
-  /**
+    /**
    * A RPC handler for client. It create a regular file or directory on metadata
    * server.
    *
@@ -105,44 +116,44 @@ public:
    * Also note that we don't use an enum for `type` since it needs extra
    * support by `msgpack` for serialization.
    */
-  auto mknode(u8 type, inode_id_t parent, const std::string &name)
-      -> inode_id_t;
+    auto mknode(u8 type, inode_id_t parent, const std::string &name)
+            -> inode_id_t;
 
-  /**
+    /**
    * A RPC handler for client. It deletes an file on metadata server from its
    * parent.
    *
    * @param parent: The inode id of the parent directory.
    * @param name: The name of the file to be deleted.
    */
-  auto unlink(inode_id_t parent, const std::string &name) -> bool;
+    auto unlink(inode_id_t parent, const std::string &name) -> bool;
 
-  /**
+    /**
    * A RPC handler for client. It looks up the dir and return the inode id of
    * the given name.
    *
    * @param parent: The parent directory of the node to be found.
    * @param name: The name of the node to be removed.
    */
-  auto lookup(inode_id_t parent, const std::string &name) -> inode_id_t;
+    auto lookup(inode_id_t parent, const std::string &name) -> inode_id_t;
 
-  /**
+    /**
    * A RPC handler for client. It returns client a list about the position of
    * each block in a file.
    *
    * @param id: The inode id of the file.
    */
-  auto get_block_map(inode_id_t id) -> std::vector<BlockInfo>;
+    auto get_block_map(inode_id_t id) -> std::vector<BlockInfo>;
 
-  /**
+    /**
    * A RPC handler for client. It allocate a new block for a file on data server
    * and return the logic block id & node id to client.
    *
    * @param id: The inode id of the file.
    */
-  auto allocate_block(inode_id_t id) -> BlockInfo;
+    auto allocate_block(inode_id_t id) -> BlockInfo;
 
-  /**
+    /**
    * A RPC handler for client. It removes a block from a file on data server
    * and delete its record on metadata server.
    *
@@ -150,26 +161,26 @@ public:
    * @param block: The block id of the file
    * @param machine_id: The machine id of the block
    */
-  auto free_block(inode_id_t id, block_id_t block, mac_id_t machine_id) -> bool;
+    auto free_block(inode_id_t id, block_id_t block, mac_id_t machine_id) -> bool;
 
-  /**
+    /**
    * A RPC handler for client. It returns the content of a directory.
    *
    * @param node: The inode id of the directory
    */
-  auto readdir(inode_id_t node)
-      -> std::vector<std::pair<std::string, inode_id_t>>;
+    auto readdir(inode_id_t node)
+            -> std::vector<std::pair<std::string, inode_id_t>>;
 
-  /**
+    /**
    * A RPC handler for client. It returns the type and attribute of a file
    *
    * @param id: The inode id of the file
    * 
    * @return: a tuple of <size, atime, mtime, ctime, type>
    */
-  auto get_type_attr(inode_id_t id) -> std::tuple<u64, u64, u64, u64, u8>;
+    auto get_type_attr(inode_id_t id) -> std::tuple<u64, u64, u64, u64, u8>;
 
-  /**
+    /**
    * Register a data server to the metadata server. It'll create a RPC
    * connection between the data server and metadata server. It should be called
    * before the metadata server starts to run. Once it's started, it wouldn't
@@ -179,72 +190,76 @@ public:
    * @param port: The port of the data server,
    * @param reliable: Whether the network is reliable or not.
    */
-  auto reg_server(const std::string &address, u16 port, bool reliable) -> bool;
+    auto reg_server(const std::string &address, u16 port, bool reliable) -> bool;
 
-  /**
+    /**
    * Start the metadata server, which means it's ready to receive requests from
    * client.
    *
    * @return: False if the server has already been launched.
    */
-  auto run() -> bool;
+    auto run() -> bool;
 
-  /**
+    /**
    * Recover the system from log
    */
-  auto recover() -> void {
-    if (!is_log_enabled_) {
-      std::cerr << "Log not enabled\n";
-      return;
+    auto recover() -> void {
+        std::unique_lock lock(big_mutex);
+        if (!is_log_enabled_) {
+            std::cerr << "Log not enabled\n";
+            return;
+        }
+        operation_->block_manager_->set_may_fail(false);
+        commit_log->recover();
+        operation_->block_manager_->set_may_fail(true);
     }
-    operation_->block_manager_->set_may_fail(false);
-    commit_log->recover();
-    operation_->block_manager_->set_may_fail(true);
-  }
 
-  /**
+    /**
    * Get log entries
    */
-  auto get_log_entries() -> usize {
-    if (is_log_enabled_) {
-      return commit_log->get_log_entry_num();
-    } else {
-      std::cerr << "Log not enabled\n";
-      return 0;
+    auto get_log_entries() -> usize {
+        if (is_log_enabled_) {
+            return commit_log->get_log_entry_num();
+        } else {
+            std::cerr << "Log not enabled\n";
+            return 0;
+        }
     }
-  }
 
 private:
-  /**
+    /**
    * Helper function for binding rpc handlers
    */
-  inline auto bind_handlers();
+    inline auto bind_handlers();
 
-  /**
+    /**
    * Helper function for initializing the fs.
    *
    * @param data_path: The file path where persists data.
    */
-  inline auto init_fs(const std::string &data_path);
+    inline auto init_fs(const std::string &data_path);
 
-  std::unique_ptr<RpcServer> server_; // Receiving requests from the client
-  std::shared_ptr<FileOperation> operation_; // Real metadata handler
-  std::map<mac_id_t, std::shared_ptr<RpcClient>>
-      clients_;              // Sending requests to data server
-  mac_id_t num_data_servers; // The number of data servers
-  bool running;
-  // Control which data server node allocates the new block
-  RandomNumberGenerator generator;
+    std::unique_ptr<RpcServer> server_;       // Receiving requests from the client
+    std::shared_ptr<FileOperation> operation_;// Real metadata handler
+    std::map<mac_id_t, std::shared_ptr<Client>>
+            clients_;// Sending requests to data server
 
-  // Log related
-  [[maybe_unused]] std::shared_ptr<chfs::CommitLog> commit_log;
-  bool is_log_enabled_;
-  bool may_failed_;
-  [[maybe_unused]] bool is_checkpoint_enabled_;
+    std::map<mac_id_t, std::mutex> client_mutexes;// Mutex for each client
+    mac_id_t num_data_servers;                    // The number of data servers
+    bool running;
+    // Control which data server node allocates the new block
+    RandomNumberGenerator generator;
 
-  /**
+    // Log related
+    std::shared_ptr<chfs::CommitLog> commit_log;
+    bool is_log_enabled_;
+    bool may_failed_;
+    [[maybe_unused]] bool is_checkpoint_enabled_;
+    std::shared_mutex big_mutex;
+
+    /**
    * {You can add anything you want here}
    */
 };
 
-} // namespace chfs
+}// namespace chfs

@@ -15,13 +15,14 @@ uint32_t get_cur_version(const std::shared_ptr<BlockManager> &bm, block_id_t blo
     }
 
     auto offset = (block_id - VERSION_BLOCK_ID) * sizeof(uint32_t);
+    assert(offset < 4096);
 
     uint32_t version = 0;
 
     memcpy(&version, buffer.data() + offset, sizeof(version));
     version++;
     memcpy(buffer.data() + offset, &version, sizeof(version));
-    res = bm->write_partial_block(VERSION_BLOCK_ID, buffer.data() + offset, offset, sizeof(version));
+    res = bm->write_partial_block(VERSION_BLOCK_ID, buffer.data() + offset % 4096, offset, sizeof(version));
 
     if (!res.is_ok()) {
         return 0;
@@ -40,6 +41,9 @@ uint32_t get_version(const std::shared_ptr<BlockManager> &bm, block_id_t block_i
     }
 
     auto offset = (block_id - VERSION_BLOCK_ID) * sizeof(uint32_t);
+
+    assert(offset < 4096);
+
 
     uint32_t version = 0;
 
@@ -130,6 +134,9 @@ auto DataServer::write_data(block_id_t block_id, usize offset,
     block_data.resize(block_allocator_->bm->block_size());
     auto result = block_allocator_->bm->read_block(block_id, block_data.data());
     if (!result.is_ok()) {
+        return false;
+    }
+    if (offset >= 4096) {
         return false;
     }
 

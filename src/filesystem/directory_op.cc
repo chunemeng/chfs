@@ -35,7 +35,7 @@ auto dir_list_to_string(const std::list<DirectoryEntry> &entries)
     for (const auto &entry: entries) {
         oss << entry.name << ':' << entry.id << '/';
     }
-    std::cerr << oss.str() << std::endl;
+//    std::cerr << oss.str() << std::endl;
     return oss.str();
 }
 
@@ -147,6 +147,51 @@ auto FileOperation::lookup(inode_id_t id, const char *name)
     return ChfsResult<inode_id_t>(ErrorType::NotExist);
 }
 
+auto FileOperation::mk_helper(inode_id_t parent, const char *name, InodeType type, std::vector<std::shared_ptr<BlockOperation>> &ops, bool &is_error)
+        -> ChfsResult<inode_id_t> {
+    auto res = read_file(parent);
+
+    if (res.is_err()) {
+        return {res.unwrap_error()};
+    }
+
+    auto file_data = std::string{reinterpret_cast<char *>(res.unwrap().data()),
+                                 res.unwrap().size()};
+
+    {
+        std::string name_str(name);
+        auto pos = file_data.find(name);
+        auto pos_end = file_data.find('/', pos);
+        auto pos_mid = file_data.rfind(':', pos_end);
+
+        // maybe file name contains ':'
+        if (pos != std::string::npos && pos_end != std::string::npos &&
+            pos_mid != std::string::npos && pos_mid == pos + name_str.size()) {
+            return {ErrorType::AlreadyExist};
+        }
+    }
+
+    auto new_inode = this->alloc_inode(type, ops, is_error);
+
+    if (new_inode.is_err()) {
+        return {new_inode.unwrap_error()};
+    }
+
+
+    auto new_entry = append_to_directory(file_data, name, new_inode.unwrap());
+    std::vector<u8> old_data;
+    old_data.resize(new_entry.size());
+    old_data.assign(new_entry.begin(), new_entry.end());
+
+    auto w_res = write_file(parent, old_data, ops, is_error);
+
+    if (w_res.is_err()) {
+        return {w_res.unwrap_error()};
+    }
+
+    return ChfsResult<inode_id_t>(new_inode.unwrap());
+}
+
 // {Your code here}
 auto FileOperation::mk_helper(inode_id_t id, const char *name, InodeType type)
         -> ChfsResult<inode_id_t> {
@@ -191,8 +236,7 @@ auto FileOperation::mk_helper(inode_id_t id, const char *name, InodeType type)
 
     return ChfsResult<inode_id_t>(new_inode.unwrap());
 }
-
-auto FileOperation::unlink_regular_file(inode_id_t parent, const char *name, std::vector<block_id_t> &buf) -> ChfsNullResult {
+auto FileOperation::unlink_regular_file(inode_id_t parent, const char *name, std::vector<u8> &buf) -> ChfsNullResult {
     auto res = read_file(parent);
 
     if (res.is_err()) {
@@ -252,6 +296,14 @@ auto FileOperation::unlink_regular_file(inode_id_t parent, const char *name, std
         return KNullOk;
     }
 
+    read_as_regular_file(inode_id, buf);
+
+    auto rm_res = remove_file(inode_id);
+
+    if (rm_res.is_err()) {
+        return {rm_res.unwrap_error()};
+    }
+
 
     std::list<DirectoryEntry> list;
 
@@ -272,6 +324,100 @@ auto FileOperation::unlink_regular_file(inode_id_t parent, const char *name, std
     if (w_res.is_err()) {
         return {w_res.unwrap_error()};
     }
+
+
+    return KNullOk;
+}
+
+auto FileOperation::unlink_regular_file(inode_id_t parent, const char *name, std::vector<u8> &buf, std::vector<std::shared_ptr<BlockOperation>> &ops, bool &is_err) -> ChfsNullResult {
+    auto res = read_file(parent);
+
+    if (res.is_err()) {
+        return {res.unwrap_error()};
+    }
+
+    auto file_data = std::string{reinterpret_cast<char *>(res.unwrap().data()),
+                                 res.unwrap().size()};
+
+    std::string name_str(name);
+
+    // maybe file name contains ':'
+    auto pos = file_data.find(name_str);
+    auto pos_end = file_data.find('/', pos);
+    auto pos_mid = file_data.rfind(':', pos_end);
+
+    if (pos == std::string::npos || (pos_mid != pos + name_str.size())) {
+        return {ErrorType::NotExist};
+    }
+
+    auto inode_id =
+            string_to_inode_id(file_data.substr(pos_mid + 1, pos_end - pos_mid - 1));
+
+
+    auto tp_res = gettype(inode_id);
+
+    if (tp_res.is_err()) {
+        return {tp_res.unwrap_error()};
+    }
+
+    if (tp_res.unwrap() == InodeType::Directory) {
+        auto rm_res = remove_file(inode_id);
+
+        if (rm_res.is_err()) {
+            return {rm_res.unwrap_error()};
+        }
+
+        std::list<DirectoryEntry> list;
+
+        auto read_res = read_directory(this, parent, list);
+
+        if (read_res.is_err()) {
+            return {read_res.unwrap_error()};
+        }
+
+        auto src = rm_from_directory(dir_list_to_string(list), name);
+
+        std::vector<u8> old_data;
+        old_data.resize(src.size());
+        old_data.assign(src.begin(), src.end());
+
+        auto w_res = write_file(parent, old_data, ops, is_err);
+
+        if (w_res.is_err()) {
+            return {w_res.unwrap_error()};
+        }
+        return KNullOk;
+    }
+
+    read_as_regular_file(inode_id, buf);
+
+    auto rm_res = remove_file(inode_id);
+
+    if (rm_res.is_err()) {
+        return {rm_res.unwrap_error()};
+    }
+
+
+    std::list<DirectoryEntry> list;
+
+    auto read_res = read_directory(this, parent, list);
+
+    if (read_res.is_err()) {
+        return {read_res.unwrap_error()};
+    }
+
+    auto src = rm_from_directory(dir_list_to_string(list), name);
+
+    std::vector<u8> old_data;
+    old_data.resize(src.size());
+    old_data.assign(src.begin(), src.end());
+
+    auto w_res = write_file(parent, old_data, ops, is_err);
+
+    if (w_res.is_err()) {
+        return {w_res.unwrap_error()};
+    }
+
 
     return KNullOk;
 }

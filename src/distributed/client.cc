@@ -33,7 +33,13 @@ auto ChfsClient::mknode(FileType type, inode_id_t parent,
     if (res.is_err()) {
         return ChfsResult<inode_id_t>(res.unwrap_error());
     }
-    return {res.unwrap()->as<inode_id_t>()};
+
+    auto inode_id = res.unwrap()->as<inode_id_t>();
+    if (inode_id == 0) {
+        return {ErrorType::INVALID_ARG};
+    }
+
+    return inode_id;
 }
 
 // {Your code here}
@@ -76,8 +82,8 @@ auto ChfsClient::get_type_attr(inode_id_t id)
     }
     auto data = res.unwrap()->as<std::tuple<u64, u64, u64, u64, u8>>();
     return {std::make_pair(static_cast<InodeType>(std::get<4>(data)),
-                           FileAttr{std::get<0>(data), std::get<1>(data),
-                                    std::get<2>(data), std::get<3>(data)})};
+                           FileAttr{std::get<1>(data),
+                                    std::get<2>(data), std::get<3>(data), std::get<0>(data)})};
 }
 
 /**
@@ -89,45 +95,38 @@ auto ChfsClient::read_file(inode_id_t id, usize offset, usize size)
     auto res = metadata_server_->call("get_block_map", id);
     auto block_map = res.unwrap()->as<std::vector<BlockInfo>>();
     std::vector<u8> data;
+    data.reserve(size);
     size_t off = offset / 4096;
-    bool pad = offset % 4096 + size > 4096;
 
-    if (pad) {
-        if (off >= block_map.size() + 1) {
+    size_t block_num = (offset % 4096 + size + 4095) / 4096;
+
+    size_t read_offset = offset % 4096;
+    size_t remaining = size;
+
+    for (size_t t = 0; t < block_num; t++) {
+        if (remaining == 0) {
+            break;
+        }
+
+        if (t + off >= block_map.size()) {
             return {ErrorType::INVALID_ARG};
         }
 
-        auto block_info = block_map[off];
-        auto sz = 4096 - offset % 4096;
-        auto resf = data_servers_[std::get<1>(block_info)]->call("read_data", std::get<0>(block_info), offset % 4096, sz, std::get<2>(block_info));
+        auto block_info = block_map[t + off];
+        size_t read_size = std::min(4096 - read_offset, remaining);
+        remaining -= read_size;
+        auto resf = data_servers_[std::get<1>(block_info)]->call("read_data", std::get<0>(block_info), read_offset, read_size, std::get<2>(block_info));
         if (resf.is_err()) {
             return {resf.unwrap_error()};
         }
         auto buf = resf.unwrap()->as<std::vector<u8>>();
-
-        block_info = block_map[off + 1];
-        resf = data_servers_[std::get<1>(block_info)]->call("read_data", std::get<0>(block_info), 0, size - sz, std::get<2>(block_info));
-        if (resf.is_err()) {
-            return {resf.unwrap_error()};
-        }
-        data = resf.unwrap()->as<std::vector<u8>>();
-        buf.insert(buf.end(), data.begin(), data.end());
-        return {buf};
-    } else {
-        if (off >= block_map.size()) {
-            return {ErrorType::INVALID_ARG};
+        if (t == 0) {
+            read_offset = 0;
         }
 
-        auto block_info = block_map[off];
-        auto resf = data_servers_[std::get<1>(block_info)]->call("read_data", std::get<1>(block_info), offset % 4096, size, std::get<2>(block_info));
-        if (resf.is_err()) {
-            return {resf.unwrap_error()};
-        }
-        data = resf.unwrap()->as<std::vector<u8>>();
-
-
-        return {data};
+        data.insert(data.end(), buf.begin(), buf.end());
     }
+    return {data};
 }
 
 // {Your code here}
@@ -138,8 +137,9 @@ auto ChfsClient::write_file(inode_id_t id, usize offset, std::vector<u8> data)
     std::vector<u8> buffer;
     size_t num = offset / 4096;
     size_t total = (offset + data.size() + 4095) / 4096;
-    if (num >= block_map.size()) {
-        for (size_t i = block_map.size(); i < total; i++) {
+    if (total >= block_map.size()) {
+        size_t sz = block_map.size();
+        for (size_t i = sz; i < total; i++) {
             auto reff = metadata_server_->call("alloc_block", id);
             if (reff.is_err()) {
                 return {reff.unwrap_error()};
