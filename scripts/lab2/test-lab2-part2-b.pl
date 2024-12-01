@@ -83,7 +83,7 @@ sub writeone {
     $contents = substr($contents, 0, $len);
     $files->{$name} = $contents;
 
-    syswrite F, $files->{$name}, length($files->{$name}) 
+    syswrite F, $files->{$name}, length($files->{$name})
 	or die "cannot write to $f";
     close(F);
 }
@@ -130,7 +130,7 @@ sub append {
     }
     $contents = substr($contents, 0, $n);
     $files->{$name} .= $contents; ## Append the file content
-    
+
     seek(F, 0, 2);  ## goto end of file
     syswrite(F, $contents, length($contents), 0) or die "cannot append to $f due to $!";
     close(F);
@@ -156,7 +156,7 @@ sub writeat {
     }
     substr($x, $off, length($contents)) = $contents;
     $files->{$name} = $x;
-    
+
     seek(F, $off, 0);
     syswrite(F, $contents, length($contents), 0)
         or die "cannot write $f at offset $off";
@@ -187,4 +187,3 @@ sub dircheck {
 }
 
 exit(0);
-

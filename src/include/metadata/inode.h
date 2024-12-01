@@ -36,6 +36,8 @@ enum class InodeType : u32 {
 class Inode;
 class FileOperation;
 
+
+
 /**
  * Abstract the file attributes
  */
@@ -168,8 +170,7 @@ public:
    *
    * @param bm the block manager
    */
-  auto write_indirect_block(std::shared_ptr<BlockManager> &bm,
-                            std::vector<u8> &buffer) -> ChfsNullResult;
+  auto write_indirect_block(std::shared_ptr<BlockManager> &bm, std::vector<u8> &buffer, bool &is_err) -> ChfsNullResult;
 
   /**
    * Set the direct block ID given an index

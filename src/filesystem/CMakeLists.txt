@@ -2,7 +2,7 @@ add_library(
   chfs_fs
   OBJECT
   control_op.cc
-  data_op.cc 
+  data_op.cc
   directory_op.cc
 )
 

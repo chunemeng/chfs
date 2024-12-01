@@ -46,6 +46,40 @@ auto FileOperation::get_free_blocks_num() const -> ChfsResult<u64> {
   return ChfsResult<u64>(block_allocator_->free_block_cnt());
 }
 
+auto FileOperation::remove_regular_file(inode_id_t id, std::vector<block_id_t> &buf) -> ChfsNullResult {
+    auto error_code = ErrorType::DONE;
+    const auto block_size = this->block_manager_->block_size();
+
+    std::vector<u8> inode(block_size);
+
+    std::vector<block_id_t> free_set;
+
+    auto inode_p = reinterpret_cast<Inode *>(inode.data());
+    auto inode_res = this->inode_manager_->read_inode(id, inode);
+    if (inode_res.is_err()) {
+        error_code = inode_res.unwrap_error();
+        // I know goto is bad, but we have no choice
+        return {error_code};
+    }
+
+    auto size = inode_p->inner_attr.size * 2;
+
+    buf.resize(size);
+    memcpy(buf.data(), inode_p->blocks, size);
+
+    // First we free the inode
+    {
+        auto res = this->inode_manager_->free_inode(id);
+        if (res.is_err()) {
+            error_code = res.unwrap_error();
+            return {error_code};
+        }
+        free_set.push_back(inode_res.unwrap());
+    }
+
+    return KNullOk;
+}
+
 auto FileOperation::remove_file(inode_id_t id) -> ChfsNullResult {
   auto error_code = ErrorType::DONE;
   const auto block_size = this->block_manager_->block_size();
