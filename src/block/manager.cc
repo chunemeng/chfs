@@ -175,6 +175,13 @@ auto BlockManager::sync_log(block_id_t block_id) -> ChfsNullResult {
     return KNullOk;
 }
 
+auto BlockManager::sync_meat_data(uint64_t offset, uint64_t size) -> ChfsNullResult {
+    auto res = msync(this->block_data + offset, size, MS_SYNC | MS_INVALIDATE);
+    if (res != 0)
+        return ChfsNullResult(ErrorType::INVALID);
+    return KNullOk;
+}
+
 auto BlockManager::flush() -> ChfsNullResult {
     auto res = msync(this->block_data, this->block_sz * this->block_cnt, MS_SYNC | MS_INVALIDATE);
     if (res != 0)

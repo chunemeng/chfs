@@ -170,9 +170,11 @@ public:
     for (size_t i = 0; i < configs.size(); i++) {
       auto snapshot = nodes[i]->get_snapshot_direct();
       std::unique_lock<std::mutex> lock(mtx);
+
       states[i]->apply_snapshot(snapshot); 
 
       int log_value;
+
       if (static_cast<int>(states[i]->store.size() > log_idx)) {
         log_value = states[i]->store[log_idx];
         return log_value;
@@ -263,7 +265,6 @@ public:
               return log_idx;
             }
           }
-
           mssleep(20);
         }
       } else {

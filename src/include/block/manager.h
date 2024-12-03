@@ -140,6 +140,8 @@ public:
 
     auto sync_log(block_id_t block_id) -> ChfsNullResult;
 
+    auto sync_meat_data(uint64_t  offset, uint64_t size) -> ChfsNullResult;
+
     /**
    * Flush the page cache
    */
