@@ -46,7 +46,7 @@ class RaftNode {
         thread_pool->enqueue([=]() { std::cerr << buf; });                                                                           \
     } while (0);
 
-    //#define LOG_DEBUG_RAFT
+//#define LOG_DEBUG_RAFT
 
 #ifdef LOG_DEBUG_RAFT
 #define LOG(fmt, args...) RAFT_LOG(fmt, ##args)
@@ -230,7 +230,7 @@ RaftNode<StateMachine, Command>::RaftNode(int node_id, std::vector<RaftNodeConfi
 
     const std::string log_path = "/tmp/raft_log/node" + std::to_string(my_id);
     log_storage = std::make_unique<RaftLog<Command>>(std::make_shared<BlockManager>(log_path));
-    log_storage->reinit(current_term, voted_for);
+    log_storage->reinit(current_term, voted_for, snapshot_data_);
     thread_pool = std::make_unique<ThreadPool>(2);
     state = std::make_unique<StateMachine>();
 
@@ -311,7 +311,7 @@ auto RaftNode<StateMachine, Command>::new_command(std::vector<u8> cmd_data, int 
     std::unique_lock<std::mutex> lock(mtx);
     if (role == RaftRole::Leader) {
         // append log
-        log_for_commit_.emplace_back(log_storage->last_log_index_);
+        log_for_commit_.push_front(log_storage->last_log_index_);
 
         log_storage->append_log(current_term, std::move(cmd_data), cmd_size);
 
@@ -323,14 +323,26 @@ auto RaftNode<StateMachine, Command>::new_command(std::vector<u8> cmd_data, int 
 
 template<typename StateMachine, typename Command>
 auto RaftNode<StateMachine, Command>::save_snapshot() -> bool {
-    /* Lab3: Your code here */
+    std::unique_lock<std::mutex> lock(mtx);
+
+    if (log_storage->last_applied_ == 0) {
+        return false;
+    }
+
+    snapshot_data_ = std::move(state->snapshot());
+    log_storage->save_snapshot(snapshot_data_);
+    log_storage->truncate_log(log_storage->last_applied_ - 1);
+    log_storage->commit_index_ = log_storage->last_log_index_;
+    log_storage->last_applied_ = log_storage->commit_index_;
+
     return true;
 }
 
 template<typename StateMachine, typename Command>
 auto RaftNode<StateMachine, Command>::get_snapshot() -> std::vector<u8> {
     /* Lab3: Your code here */
-    return std::vector<u8>();
+    std::unique_lock<std::mutex> lock(mtx);
+    return state->snapshot();
 }
 
 /******************************************************************
@@ -462,12 +474,11 @@ auto RaftNode<StateMachine, Command>::append_entries(RpcAppendEntriesArgs rpc_ar
     }
 
 
-    if (!log_storage->contains(rpc_arg.prev_log_index, rpc_arg.prev_log_term)) {
+    if (!log_storage->contains(rpc_arg.prev_log_index - 1, rpc_arg.prev_log_term)) {
         return {current_term, false};
     }
 
     log_storage->append_entries(rpc_arg.prev_log_index, std::move(rpc_arg.entries));
-
 
     log_storage->commit_index_ = std::min(rpc_arg.leader_commit, log_storage->last_log_index_);
 
@@ -498,7 +509,7 @@ void RaftNode<StateMachine, Command>::handle_append_entries_reply(int node_id, c
         }
         pair.next_index_ = arg.prev_log_index + arg.entries.size() + 1;
         pair.match_index_ = pair.next_index_ - 1;
-        LOG("Node %d append log to %d success", my_id, pair.match_index_);
+        LOG("Node %d append log to %d success", my_id, pair.next_index_);
     } else {
         pair.next_index_ = std::max(1u, pair.next_index_ - 1);
     }
@@ -509,19 +520,23 @@ void RaftNode<StateMachine, Command>::handle_append_entries_reply(int node_id, c
 
     auto majority = (node_configs.size()) / 2 + 1;
     auto size = 1;
-    auto iter = log_for_commit_.begin();
-    for (auto &client: rpc_clients_map) {
-        if (client.first == my_id) {
-            continue;
+    for (auto iter = log_for_commit_.begin(); iter != log_for_commit_.end(); iter++) {
+        size = 1;
+        for (auto &client: rpc_clients_map) {
+            if (client.first == my_id) {
+                continue;
+            }
+            if (next_index_map_[client.first].match_index_ >= (*iter + 1)) {
+                size++;
+            }
         }
-        if (next_index_map_[client.first].match_index_ >= (*iter + 1)) {
-            size++;
+        if (size >= majority) {
+            log_storage->commit_index_ = *iter + 1;
+            LOG("Node %d commit log %d , votes %d", my_id, *iter, size);
+            //        RAFT_LOG("commit log %d , votes %d", *iter, size);
+            log_for_commit_.erase(iter, log_for_commit_.end());
+            break;
         }
-    }
-    if (size >= majority) {
-        log_storage->commit_index_ = *iter + 1;
-        //        RAFT_LOG("commit log %d , votes %d", *iter, size);
-        log_for_commit_.erase(iter);
     }
 }
 
@@ -536,12 +551,24 @@ auto RaftNode<StateMachine, Command>::install_snapshot(InstallSnapshotArgs args)
     convert_follower();
     voted_for = -1;
     current_term = args.term;
+    leader_id = args.leader_id;
     log_storage->update_node_data(current_term, voted_for);
     last_heartbeat = std::chrono::steady_clock::now();
 
+    if (args.last_included_index + 1 <= log_storage->commit_index_) {
+        return {current_term};
+    } else {
 
-    if (args.offset == 0) {
-        log_storage->install_snapshot(args.last_included_index, args.last_included_term, args.data);
+        log_storage->commit_index_ = std::max(log_storage->commit_index_, static_cast<uint32_t>(args.last_included_index) + 1);
+        log_storage->last_applied_ = log_storage->commit_index_;
+
+
+        state->apply_snapshot(args.data);
+
+        this->snapshot_data_ = args.data;
+
+        log_storage->update_for_snapshot(args.last_included_index, args.last_included_term);
+        return {current_term};
     }
 }
 
@@ -549,6 +576,47 @@ auto RaftNode<StateMachine, Command>::install_snapshot(InstallSnapshotArgs args)
 template<typename StateMachine, typename Command>
 void RaftNode<StateMachine, Command>::handle_install_snapshot_reply(int node_id, const InstallSnapshotArgs arg, const InstallSnapshotReply reply) {
     /* Lab3: Your code here */
+    std::unique_lock<std::mutex> lock(mtx);
+    if (reply.term > current_term) {
+        current_term = reply.term;
+        CON_DEBUG("Node %d convert to follower cause other install snapshot reply", my_id);
+        convert_follower();
+        voted_for = -1;
+        log_storage->update_node_data(current_term, voted_for);
+    }
+
+    if (role != RaftRole::Leader || reply.term != arg.term) {
+        return;
+    }
+
+    auto &pair = next_index_map_[node_id];
+
+    pair.next_index_ = arg.last_included_index + 2;
+    pair.match_index_ = pair.next_index_ - 1;
+    LOG("Node %d install snapshot to %d success", node_id, pair.match_index_);
+
+    auto majority = (node_configs.size()) / 2 + 1;
+    auto size = 1;
+    for (auto iter = log_for_commit_.begin(); iter != log_for_commit_.end(); iter++) {
+        size = 1;
+        for (auto &client: rpc_clients_map) {
+            if (client.first == my_id) {
+                continue;
+            }
+            if (next_index_map_[client.first].match_index_ >= (*iter + 1)) {
+                size++;
+            }
+        }
+        if (size >= majority) {
+            log_storage->commit_index_ = *iter + 1;
+            LOG("Node %d commit log %d , votes %d", my_id, *iter, size);
+            //        RAFT_LOG("commit log %d , votes %d", *iter, size);
+            log_for_commit_.erase(iter, log_for_commit_.end());
+            break;
+        }
+    }
+
+
     return;
 }
 
@@ -700,33 +768,44 @@ void RaftNode<StateMachine, Command>::run_background_commit() {
                         continue;
                     }
 
-                    std::vector<entry> entries;
-                    entries.reserve(log_storage->last_log_index_ - pair.next_index_);
-
-
                     auto prev_log_index = pair.next_index_ - 1;
-                    auto prev_log_term = log_storage->get_log_term(prev_log_index);
 
-                    log_storage->read_log(prev_log_index, log_storage->last_log_index_, entries);
+                    if (pair.next_index_ == 0 || prev_log_index >= log_storage->block_offset_) {
+                        std::vector<entry> entries;
+                        entries.reserve(log_storage->last_log_index_ - pair.next_index_);
 
 
-                    // FIXME: is this necessary?
-                    // should use term to store the current term
-                    // otherwise, the term will be changed by the background_election
-                    thread_pool->enqueue([this, target_id = client.first, term = current_term, commit_index = log_storage->commit_index_,
-                                          prev_log_index, prev_log_term, entries_m = std::move(entries)] {
-                        send_append_entries(target_id, AppendEntriesArgs<Command>{
-                                                               term,
-                                                               my_id,
-                                                               prev_log_index,
-                                                               prev_log_term,
-                                                               commit_index,
-                                                               std::move(entries_m)});
-                    });
+                        auto prev_log_term = prev_log_index == 0 ? 0 : log_storage->get_log_term(prev_log_index);
+
+                        log_storage->read_log(prev_log_index, log_storage->last_log_index_, entries);
+
+
+                        // FIXME: is this necessary?
+                        // should use term to store the current term
+                        // otherwise, the term will be changed by the background_election
+                        thread_pool->enqueue([this, target_id = client.first, term = current_term, commit_index = log_storage->commit_index_,
+                                              prev_log_index, prev_log_term, entries_m = std::move(entries)] {
+                            send_append_entries(target_id, AppendEntriesArgs<Command>{
+                                                                   term,
+                                                                   my_id,
+                                                                   prev_log_index,
+                                                                   prev_log_term,
+                                                                   commit_index,
+                                                                   std::move(entries_m)});
+                        });
+
+
+                    } else {
+                        thread_pool->enqueue([this, target_id = client.first, term = current_term,
+                                              commit_index = log_storage->commit_index_, block_offset = log_storage->block_offset_ - 1,
+                                              last_include_term = log_storage->last_include_term_, snapshot = snapshot_data_] {
+                            send_install_snapshot(target_id, InstallSnapshotArgs{term, my_id, block_offset, last_include_term, 0, snapshot, true});
+                        });
+                    }
                 }
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(HEARTBEAT_INTERVAL / 2));
+        std::this_thread::sleep_for(std::chrono::milliseconds(HEARTBEAT_INTERVAL / 20));
     }
 }
 
@@ -748,6 +827,7 @@ void RaftNode<StateMachine, Command>::run_background_apply() {
             while (log_storage->commit_index_ > log_storage->last_applied_) {
                 Command cmd = log_storage->get_command(log_storage->last_applied_);
                 log_storage->last_applied_++;
+                LOG("Node %d apply log %d", my_id, cmd.value)
                 //                RAFT_LOG("apply %d log %d", log_storage->last_applied_ - 1, cmd.value);
                 state->apply_log(cmd);
             }
@@ -777,15 +857,21 @@ void RaftNode<StateMachine, Command>::run_background_ping() {
                     }
 
                     auto pair = next_index_map_[client.first];
-
-
                     auto prev_log_index = pair.next_index_ - 1;
-
-                    auto prev_log_term = prev_log_index == 0 ? 0 : log_storage->get_log_term(prev_log_index);
-                    thread_pool->enqueue([this, term = current_term, commit_index = log_storage->commit_index_,
-                                          prev_log_index, prev_log_term, target_id = client.first]() {
-                        send_append_entries(target_id, AppendEntriesArgs<Command>{term, my_id, prev_log_index, prev_log_term, commit_index, {}});
-                    });
+                    if (prev_log_index == 0 || log_storage->block_offset_ <= prev_log_index) {
+                        auto prev_log_term = prev_log_index == 0 ? 0 : log_storage->get_log_term(prev_log_index);
+                        thread_pool->enqueue([this, term = current_term, commit_index = log_storage->commit_index_,
+                                              prev_log_index, prev_log_term, target_id = client.first]() {
+                            send_append_entries(target_id, AppendEntriesArgs<Command>{term, my_id, prev_log_index, prev_log_term, commit_index, {}});
+                        });
+                    } else {
+                        CHFS_ASSERT(log_storage->block_offset_ > 0, "block offset should not be 0");
+                        thread_pool->enqueue([this, target_id = client.first, term = current_term,
+                                              commit_index = log_storage->commit_index_, block_off = log_storage->block_offset_ - 1,
+                                              last_include_term = log_storage->last_include_term_, snapshot = snapshot_data_] {
+                            send_install_snapshot(target_id, InstallSnapshotArgs{term, my_id, block_off, last_include_term, 0, snapshot, true});
+                        });
+                    }
                 }
             }
         }
@@ -802,7 +888,6 @@ void RaftNode<StateMachine, Command>::run_background_ping() {
 template<typename StateMachine, typename Command>
 void RaftNode<StateMachine, Command>::set_network(std::map<int, bool> &network_availability) {
     std::unique_lock<std::mutex> clients_lock(clients_mtx);
-    LOG("reset network for node %d %d", my_id, election_timeout);
 
 
     /* turn off network */
