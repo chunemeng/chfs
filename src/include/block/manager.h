@@ -18,8 +18,6 @@
 #include "common/result.h"
 
 namespace chfs {
-// TODO
-
 class BlockIterator;
 
 /**
